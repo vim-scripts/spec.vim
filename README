@@ -1,0 +1,6 @@
+This is a mirror of http://www.vim.org/scripts/script.php?script_id=98
+
+This is a spec file for creating/editing rpm spec files. It supports internal and external macros.
+There are currently two commands:
+\ch creates a new changelog entry
+\CH creates a new single change
