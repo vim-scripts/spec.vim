@@ -1,7 +1,8 @@
-" -*- vim -*-
-" spec plugin
-" Guillaume Rousse <rousse@ccr.jussieu.fr>
-" 10/08/2001
+" Vim filetype plugin
+" Language:	spec file
+" Maintainer:	Guillaume Rousse <rousse@ccr.jussieu.fr>
+" URL:		http://lis.snv.jussieu.fr/~rousse/linux/spec.vim
+" Version:	$Id: spec.vim,v 1.6 2004/01/10 14:55:44 rousse Exp $
 
 if exists("b:did_ftplugin")
 	finish
@@ -20,12 +21,15 @@ if !exists("no_plugin_maps") && !exists("no_spec_maps")
 	noremap <buffer> <unique> <script> <Plug>AddChangelogEntry :call <SID>AddChangelogEntry()<CR>
 endif
 
-" rpmlint complaints for too long lines
-setlocal textwidth=72
-
 " compilation option
 setlocal makeprg=rpm\ -ba\ %
 setlocal errorformat=error:\ line\ %l:\ %m
+
+" navigation through sections
+let b:match_ignorecase = 0
+let b:match_words =
+	\ '^Name:^%description:^%clean:^%setup:^%build:^%install:^%files:' .
+	\ '^%package:^%preun:^%postun:^%changelog'
 
 if !exists("*s:AddChangelogBlock")
 	" Adds a changelog block
@@ -53,16 +57,15 @@ if !exists("*s:InsertChangelogHeader")
 	function s:InsertChangelogHeader(line)
 		" ensure english locale
 		language time C
-
-		" get values
-		let rpm_packager = <SID>GetTagValue("Packager")
-		let rpm_version = <SID>GetTagValue("Version")
-		let rpm_release = <SID>GetTagValue("Release")
-
 		" insert blank line first
 		call append(a:line, "")
 		" insert changelog header
-		call append(a:line, "* " . strftime("%a %b %d %Y") . " " . rpm_packager . " " . rpm_version . "-" . rpm_release)
+		call append(a:line,
+			\ "* " . strftime("%a %b %d %Y") . 
+			\ " " . <SID>GetTagValue("Packager") .
+			\ " " . <SID>GetTagValue("Version") .
+			\ "-" . <SID>GetTagValue("Release")
+			\)
 	endfunction
 endif
 
@@ -72,7 +75,7 @@ if !exists("*s:InsertChangelogEntry")
 		" insert changelog entry
 		call append(a:line, "- ")
 		" position cursor here
-		execute a:line + 1
+		execute a:line
 		" enter insert mode
 		startinsert!
 	endfunction
@@ -86,11 +89,11 @@ if !exists("*s:GetTagValue")
 		let value = substitute(line, pattern, "", "")
 
 		" resolve macros
-		while (value =~ '%{.*}')
-			let macro = matchstr(value, '%{.*}')
-			let macro_name = substitute(macro, '%{\(.*\)}', '\1', "")
+		while (value =~ '%{\?\w\{3,}}\?')
+			let macro = matchstr(value, '%{\?\w\{3,}}\?')
+			let macro_name = substitute(macro, '%{\?\(\w\{3,}\)}\?', '\1', "")
 			let macro_value = <SID>GetMacroValue(macro_name)
-			let value = substitute(value, '%{' . macro_name . '}', macro_value, "")
+			let value = substitute(value, '%{\?' . macro_name . '}\?', macro_value, "")
 		endwhile
 		
 		" try to read externaly defined values
@@ -116,7 +119,7 @@ if !exists("*s:GetExternalMacroValue")
 	function s:GetExternalMacroValue(macro)
 		if filereadable($HOME . "/.rpmmacros")
 			let pattern = '^%' . tolower(a:macro) . '\s*'
-			let line = system("grep " . pattern . " $HOME/.rpmmacros")
+			let line = system("grep '" . pattern . "' $HOME/.rpmmacros")
 			" get rid of this !#&* trailing <NL>
 			let line = strpart(line, 0, strlen(line) - 1)
 			return substitute(line, pattern, "", "")
