@@ -1,8 +1,8 @@
 " Vim filetype plugin
 " Language:	spec file
-" Maintainer:	Guillaume Rousse <rousse@ccr.jussieu.fr>
-" URL:		http://lis.snv.jussieu.fr/~rousse/linux/spec.vim
-" Version:	$Id: spec.vim,v 1.6 2004/01/10 14:55:44 rousse Exp $
+" Maintainer:	Guillaume Rousse <guillomovitch@zarb.org>
+" URL:		http://www.zarb.org/~guillomovitch/linux/spec.vim
+" Version:	$Id: spec.vim 181 2005-07-21 18:37:45Z guillaume $
 
 if exists("b:did_ftplugin")
 	finish
@@ -11,14 +11,14 @@ let b:did_ftplugin = 1
 
 " Add mappings, unless user doesn't want
 if !exists("no_plugin_maps") && !exists("no_spec_maps")
-	if !hasmapto("<Plug>AddChangelogBlock")
-		map <buffer> <LocalLeader>ch <Plug>AddChangelogBlock
-	endif
 	if !hasmapto("<Plug>AddChangelogEntry")
-		map <buffer> <LocalLeader>CH <Plug>AddChangelogEntry
+		map <buffer> <LocalLeader>ch <Plug>AddChangelogEntry
 	endif
-	noremap <buffer> <unique> <script> <Plug>AddChangelogBlock :call <SID>AddChangelogBlock()<CR> 
-	noremap <buffer> <unique> <script> <Plug>AddChangelogEntry :call <SID>AddChangelogEntry()<CR>
+	if !hasmapto("<Plug>AddChangelogItem")
+		map <buffer> <LocalLeader>CH <Plug>AddChangelogItem
+	endif
+	noremap <buffer> <unique> <script> <Plug>AddChangelogEntry :call <SID>AddChangelogEntry()<CR> 
+	noremap <buffer> <unique> <script> <Plug>AddChangelogItem :call <SID>AddChangelogItem()<CR>
 endif
 
 " compilation option
@@ -28,54 +28,110 @@ setlocal errorformat=error:\ line\ %l:\ %m
 " navigation through sections
 let b:match_ignorecase = 0
 let b:match_words =
-	\ '^Name:^%description:^%clean:^%setup:^%build:^%install:^%files:' .
-	\ '^%package:^%preun:^%postun:^%changelog'
-
-if !exists("*s:AddChangelogBlock")
-	" Adds a changelog block
-	function s:AddChangelogBlock()
-		" look for changelog section
-		let line = <SID>GetFirstLocation(0, '^%changelog')
-		call <SID>InsertChangelogHeader(line)
-		call <SID>InsertChangelogEntry(line + 1)
-	endfunction
-endif
+	\ '^Name:^%description:^%clean:^^%setup:^%build:^%install:^%files:' .
+	\ '^%package:^%pre:^%post:^%changelog:^%check'
 
 if !exists("*s:AddChangelogEntry")
 	" Adds a changelog entry
 	function s:AddChangelogEntry()
 		" look for changelog section
-		let line = <SID>GetFirstLocation(0, '^%changelog')
-		" look for last entry
-		let line = <SID>GetLastLocation(line + 1, '^- ')
-		call <SID>InsertChangelogEntry(line)
+		let l:line = <SID>LocateChangelogSection()
+		" insert changelog header just after
+		call <SID>InsertChangelogHeader(l:line)
+		" insert changelog item just after
+		call <SID>InsertChangelogItem(l:line + 1)
+	endfunction
+endif
+
+if !exists("*s:AddChangelogItem")
+	" Adds a changelog item
+	function s:AddChangelogItem()
+		" look for changelog section
+		let l:line = <SID>LocateChangelogSection()
+		" look for first header
+		let l:entry = search('^\*', 'W')
+		if l:entry == 0
+			call <SID>InsertChangelogHeader(l:line)
+			let l:entry = l:line + 1
+		endif
+		" look for either first or last item
+		if exists("g:spec_chglog_prepend")
+			let l:item = l:entry
+		else
+			let l:item = search('^$', 'W')
+			if l:item == 0
+				let l:item = line('$')
+			else
+				let l:item = l:item - 1
+			endif
+		endif
+		call <SID>InsertChangelogItem(l:item)
+	endfunction
+endif
+
+if !exists("*s:LocateChangelogSection")
+	" Locate changelog section, creating it if needed
+	function s:LocateChangelogSection()
+		let l:line = search('^%changelog', 'w')
+		if l:line == 0
+			let l:line = line('$')
+			if getline(l:line) !~ '^$'
+				call append(l:line, '')
+				let l:line = l:line + 1
+			endif
+			call append(l:line, '%changelog')
+			let l:line = l:line + 1
+			call cursor(l:line, 1)
+		endif
+		return l:line
 	endfunction
 endif
 
 if !exists("*s:InsertChangelogHeader")
-	" Insert a changelog header just after the given line
+	" Insert a changelog header at the given line
 	function s:InsertChangelogHeader(line)
 		" ensure english locale
 		language time C
-		" insert blank line first
-		call append(a:line, "")
+		" read values from configuration
+		let s:date = exists("g:spec_chglog_date") ? g:spec_chglog_date : "%a %b %d %Y"
+		let s:packager =  exists("g:spec_chglog_packager") ? g:spec_chglog_packager : <SID>GetExternalMacroValue("packager")
+		let s:revision = exists("g:spec_chglog_revision") ? g:spec_chglog_revision : 1
+		" compute header
+		let l:header = "*"
+		if strlen(s:date)
+			let l:header = l:header . ' ' . strftime(s:date)
+		endif
+		if strlen(s:packager)
+			let l:header = l:header . ' ' . s:packager
+		endif
+		if s:revision
+			let l:epoch = <SID>GetTagValue("Epoch")
+			let l:version = <SID>GetTagValue("Version")
+			let l:release = <SID>GetTagValue("Release")
+			if strlen(l:epoch)
+				let l:header = l:header . ' ' . l:epoch . ':' . l:version . '-' . l:release
+			else
+				let l:header = l:header . ' ' . l:version . '-' . l:release
+			endif
+		endif
+		" insert blank line if needed
+		if getline(a:line + 1) !~ '^$'
+			call append(a:line, "")
+		endif
 		" insert changelog header
-		call append(a:line,
-			\ "* " . strftime("%a %b %d %Y") . 
-			\ " " . <SID>GetTagValue("Packager") .
-			\ " " . <SID>GetTagValue("Version") .
-			\ "-" . <SID>GetTagValue("Release")
-			\)
+		call append(a:line, l:header)
+		" position cursor here
+		call cursor(a:line + 1, 1)
 	endfunction
 endif
 
-if !exists("*s:InsertChangelogEntry")
-	" Insert a changelog entry just after the given line
-	function s:InsertChangelogEntry(line)
+if !exists("*s:InsertChangelogItem")
+	" Insert a changelog entry at the given line
+	function s:InsertChangelogItem(line)
 		" insert changelog entry
 		call append(a:line, "- ")
 		" position cursor here
-		execute a:line
+		call cursor(a:line + 1, 1)
 		" enter insert mode
 		startinsert!
 	endfunction
@@ -84,93 +140,57 @@ endif
 if !exists("*s:GetTagValue")
 	" Return value of a rpm tag
 	function s:GetTagValue(tag)
-		let pattern = '^' . a:tag . ':\s*'
-		let line = <SID>GetFirstLine(0, pattern)
-		let value = substitute(line, pattern, "", "")
+		let l:pattern = '^' . a:tag . ':\s*'
+		let l:line = search(l:pattern, 'w')
+		if l:line != 0
+			let l:string = getline(l:line)
+			let l:value = substitute(l:string, l:pattern, "", "")
 
-		" resolve macros
-		while (value =~ '%{\?\w\{3,}}\?')
-			let macro = matchstr(value, '%{\?\w\{3,}}\?')
-			let macro_name = substitute(macro, '%{\?\(\w\{3,}\)}\?', '\1', "")
-			let macro_value = <SID>GetMacroValue(macro_name)
-			let value = substitute(value, '%{\?' . macro_name . '}\?', macro_value, "")
-		endwhile
-		
-		" try to read externaly defined values
-		if (value == "")
-			let value = <SID>GetExternalMacroValue(a:tag)
+			" resolve macros
+			while (l:value =~ '%{\?\w\{3,}}\?')
+				let l:macro = matchstr(l:value, '%{\?\w\{3,}}\?\(\s\+.\+\)\?')
+				if l:macro =~ '%\w\{3,}\s\+.\+'
+					let l:macro_name = substitute(l:macro, '%\(\w\{3,}\s\+\)', '\1', "")
+					let l:macro_value = <SID>GetExternalMacroValue(l:macro_name)
+					let l:value = substitute(l:value, '%' . l:macro_name, l:macro_value, "")
+				else
+					let l:macro_name = substitute(l:macro, '%{\?\(\w\{3,}\)}\?', '\1', "")
+					let l:macro_value = <SID>GetMacroValue(l:macro_name)
+					let l:value = substitute(l:value, '%{\?' . l:macro_name . '}\?', l:macro_value, "")
+				endif
+			endwhile
+		else
+			let l:value = ''
 		endif
-
-		return value
+		return l:value
 	endfunction
 endif
 
 if !exists("*s:GetMacroValue")
 	" Return value of a rpm macro
 	function s:GetMacroValue(macro)
-		let pattern = '^%define\s*' . a:macro . '\s*'
-		let line = <SID>GetFirstLine(0, pattern)
-		return substitute(line, pattern, "", "")
+		let l:pattern = '^%define\s*' . a:macro . '\s*'
+		let l:line = search(l:pattern, 'w')
+		if l:line != 0
+			let l:string = getline(l:line)
+			let l:value = substitute(l:string, l:pattern, "", "")
+		else
+			" try to read externaly defined values
+			let l:value = <SID>GetExternalMacroValue(a:macro)
+		endif
+		return l:value
 	endfunction
 endif
 
 if !exists("*s:GetExternalMacroValue")
-	" Return value of an external rpm macro defined in $HOME/.rpmmacros
+	" Return value of an external rpm macro
 	function s:GetExternalMacroValue(macro)
-		if filereadable($HOME . "/.rpmmacros")
-			let pattern = '^%' . tolower(a:macro) . '\s*'
-			let line = system("grep '" . pattern . "' $HOME/.rpmmacros")
-			" get rid of this !#&* trailing <NL>
-			let line = strpart(line, 0, strlen(line) - 1)
-			return substitute(line, pattern, "", "")
+		let l:value = system("rpm --eval '%" . a:macro . "'")
+		let l:value = strpart(l:value, 0, strlen(l:value) - 1)
+		" return empty string for unknown macros
+		if l:value == "%" . a:macro
+			let l:value = ""
 		endif
-	endfunction
-endif
-
-if !exists("*s:GetFirstLocation")
-	" Return location of first line matching the given pattern after the given line
-	" Return -1 if not found at the end of the file
-	function s:GetFirstLocation(from, pattern)
-		let linenb = a:from
-		while (linenb <= line("$"))
-			let linenb = linenb + 1
-			let linestr = getline(linenb)
-			if (linestr =~ a:pattern)
-				return linenb
-			endif
-		endwhile
-		return -1
-	endfunction
-endif
-
-if !exists("*s:GetLastLocation")
-	" Return location of last line matching the given pattern after the given line
-	" Return -1 if still found at the end of the file
-	function s:GetLastLocation(from, pattern)
-		let linenb = a:from
-		while (linenb <= line("$"))
-			let linenb = linenb + 1
-			let linestr = getline(linenb)
-			if (linestr !~ a:pattern)
-				return linenb - 1
-			endif
-		endwhile
-		return -1
-	endfunction
-endif
-
-if !exists("*s:GetFirstLine")
-	" Return first line matching the given pattern after the given line
-	" Return "" if not found at the end of the file
-	function s:GetFirstLine(from, pattern)
-		let linenb = a:from
-		while (linenb <= line("$"))
-			let linenb = linenb + 1
-			let linestr = getline(linenb)
-			if (linestr =~ a:pattern)
-				return linestr
-			endif
-		endwhile
-		return ""
+		return l:value
 	endfunction
 endif
